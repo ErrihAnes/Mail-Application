@@ -1,0 +1,85 @@
+import email
+import imaplib
+
+from apscheduler.schedulers.background import BackgroundScheduler
+
+from mailapp.brain.models import Domain
+from mailapp.extentions import db
+from mailapp.user.models import User
+
+userDomains = []
+from flask import Blueprint,request
+from flask_login import current_user
+print(userDomains)
+from mailapp.brain.agent import chat, match_email_with_prompt
+from mailapp.brain.brainFunction import GetMail, file_exist, moveFile, createfile
+from mailapp.mail.models import MailAccount
+
+brain = Blueprint('brain',__name__)
+
+
+def emailcontaint():
+
+    mail_content = GetMail()
+    result = chat(mail_content, userDomains)
+    return result
+@brain.route('/api/brain/traitement')
+def traiter():
+
+    mail_content = GetMail()
+    result = chat(mail_content,userDomains)
+    return result
+
+@brain.route('/api/brain/adddomain',methods=['POST'])
+def adddomain():
+    targetfile = request.form.get('targetfile')
+    prompt = request.form.get('prompt')
+
+    try:
+        newdomain = Domain(user=current_user, domain=targetfile,prompt=prompt)
+        db.session.add(newdomain)
+        db.session.commit()
+    except Exception as e:
+        print(f"Erreur lors de l'ajout a la base de donnée : {e}")
+
+    return "we"
+
+def automove_task(app_instance):
+    with app_instance.app_context():
+        print("Scheduler: Exécution de automove_task...")
+        all_users = User.query.all()
+
+        for user in all_users:
+            print(f"Scheduler: Traitement pour l'utilisateur ID {user.uid}")
+            user_domains = Domain.query.filter_by(user_id=user.uid).all()
+            if not user_domains:
+                print(f"Scheduler: Aucun domaine pour l'utilisateur ID {user.uid}")
+                continue
+
+            mail_contents = GetMail(user_id=user.uid)
+
+            if not mail_contents:
+                print(f"Scheduler: Aucun email pour l'utilisateur ID {user.uid}")
+                continue
+
+            for mail_content_single in mail_contents:
+                for domain_obj in user_domains:
+                    print(f"Scheduler: Vérification domaine '{domain_obj.domain}' pour user {user.uid}")
+                    res = match_email_with_prompt(mail_content_single, domain_obj.prompt)
+                    target_directory_name = domain_obj.domain
+
+                    if res:
+                        print(f"Scheduler: MATCH pour user {user.uid}, domaine '{domain_obj.domain}'. Déplacement.")
+                        if not file_exist(target_directory_name):
+                            createfile(target_directory_name)
+                        moveFile(target_directory_name)
+                        break
+
+        print("Scheduler: automove_task terminé.")
+
+
+def start_scheduler(app):
+    scheduler = BackgroundScheduler(daemon=True)
+    scheduler.add_job(func=automove_task, args=[app], trigger="interval", seconds=60)
+    scheduler.start()
+    print("APScheduler démarré.")

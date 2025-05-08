@@ -1,0 +1,44 @@
+
+def validate_cred(email,appPassword,imaphost):
+    try:
+        imap = imaplib.IMAP4_SSL(imaphost, 993)
+        imap.login(email, appPassword)
+        return jsonify({"message": "Login successful"}), 200
+    except Exception as e:
+        return jsonify({"message": f"{e}"}), 401
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def get_email_count(email: str, apppassword: str, imaphost: str, port: int = 993):
+    try:
+        # Connexion sécurisée avec le bon port
+        imap = imaplib.IMAP4_SSL(imaphost, int(port))
+        imap.login(email, apppassword)
+
+        imap.select("INBOX")
+        result, data = imap.search(None, "ALL")
+
+        if result == "OK":
+            email_ids = data[0].split()
+            email_count = len(email_ids)
+            imap.logout()
+            return email_count
+        else:
+            raise Exception("Impossible de récupérer les emails.")
+
+    except Exception as e:
+        print(f"Erreur lors de la récupération du nombre d'emails: {e}")
+        return None

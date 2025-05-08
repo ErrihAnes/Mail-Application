@@ -1,0 +1,152 @@
+def GetMail():
+    if not current_user.is_authenticated:
+        abort(401)  # Unauthorized
+    usermail= current_user.email
+    mail_account = MailAccount.query.filter_by(user_id=current_user.uid).first()
+    password=mail_account.apppassword
+    imaphost=mail_account.imaphost
+    print(usermail)
+    print(mail_account.apppassword)
+    print(mail_account.imaphost)
+
+    mail = imaplib.IMAP4_SSL(imaphost)
+    mail.login(usermail,password)
+    mail.select("inbox")
+    result, data = mail.search(None, "ALL")
+    mail_ids = data[0].split()
+    if not mail_ids:
+        print("Boîte de réception vide.")
+        return
+
+    latest_email_id = mail_ids[-1]
+    # Récupération du mail
+
+    result, msg_data = mail.fetch(latest_email_id, "(RFC822)")
+    raw_email = msg_data[0][1]
+    message = email.message_from_bytes(raw_email)
+
+    # Extraction du contenu
+    mail_content = ""
+    if message.is_multipart():
+        for part in message.walk():
+            content_type = part.get_content_type()
+            if content_type == "text/plain" and part.get_content_disposition() is None:
+                mail_content = part.get_payload(decode=True).decode()
+                break
+    else:
+        mail_content = message.get_payload(decode=True).decode()
+
+    print("Contenu du mail :", mail_content)
+
+    return mail_content
+
+
+def automove():
+    domains = Domain.query.filter_by(user_id=current_user.uid).all()
+    for domain in domains:
+        mail_content = GetMail()
+        print(mail_content)
+        res = match_email_with_prompt(mail_content, domain.prompt)
+        file = file_exist(domain)
+        print(f'domain {domain } -> prompt : {domain.prompt}')
+        if (file):
+            moveFile(domain)
+            print("moved")
+        else:
+            createfile(domain)
+            moveFile(domain)
+        if res:
+            return f'oui c ca , file : {file}'
+        else:
+            return f'nooo , file : {file}'
+    return ""
+def start_scheduler(app):
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(func=automove, trigger="interval", seconds=60)  # vérifie chaque 60 sec
+    scheduler.start()
+
+
+def file_exist(file_name):
+    usermail = current_user.email
+    mail_account = MailAccount.query.filter_by(user_id=current_user.uid).first()
+    password = mail_account.apppassword
+    imaphost = mail_account.imaphost
+
+    print(usermail)
+    print(password)
+    print(imaphost)
+
+    try:
+        # Connexion au serveur IMAP
+        mail = imaplib.IMAP4_SSL(imaphost)
+        mail.login(usermail, password)
+
+        # Lister tous les dossiers
+        status, folders = mail.list()
+        if status != "OK":
+            print("Erreur lors de la récupération des dossiers.")
+            return False
+
+        # Nettoyage et vérification
+        for folder in folders:
+            # Décodage et extraction du nom du dossier
+            decoded = folder.decode()
+            parts = decoded.split(' "/" ')
+            if len(parts) == 2:
+                folder_name = parts[1].strip('"')
+                if folder_name.lower() == file_name.lower():
+                    return True
+
+        return False
+    except Exception as e:
+        print(f"Erreur IMAP : {e}")
+        return False
+
+def moveFile(targetfile):
+
+    if not current_user.is_authenticated:
+        abort(401)  # Unauthorized
+
+    usermail= current_user.email
+    mail_account = MailAccount.query.filter_by(user_id=current_user.uid).first()
+    password=mail_account.apppassword
+    imaphost=mail_account.imaphost
+
+    # Connexion au serveur IMAP
+    mail = imaplib.IMAP4_SSL(imaphost)
+    mail.login(usermail, password)
+
+    # Sélection de la boîte de réception
+    mail.select("inbox")
+    # Recherche du dernier mail
+    result, data = mail.search(None, "ALL")
+    ids = data[0].split()
+    dernier_id = ids[-1]
+    # Copier le mail dans le dossier cible
+    mail.copy(dernier_id, targetfile)
+
+    # Supprimer le mail de la boîte de réception
+    mail.store(dernier_id, '+FLAGS', '\\Deleted')
+    # Appliquer la suppression
+    mail.expunge()
+    # Déconnexion
+    mail.logout()
+
+def createfile(targetfile):
+    usermail = current_user.email
+    mail_account = MailAccount.query.filter_by(user_id=current_user.uid).first()
+    password = mail_account.apppassword
+    imaphost = mail_account.imaphost
+
+    try:
+        # Connexion au serveur IMAP
+        mail = imaplib.IMAP4_SSL(imaphost)
+        mail.login(usermail, password)
+
+        # Création du dossier
+        mail.create(targetfile)
+
+        mail.logout()
+
+    except Exception as e:
+        print(f"Erreur lors de la création du dossier : {e}")
